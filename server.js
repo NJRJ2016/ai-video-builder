@@ -1,40 +1,66 @@
 import express from "express";
-import OpenAI from "openai";
+import fs from "fs";
+import path from "path";
+import { exec } from "child_process";
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "200mb" }));
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const PORT = process.env.PORT || 3000;
 
 app.get("/", (req, res) => {
   res.send("AI Video Builder is running 🚀");
 });
 
-app.post("/generate-script", async (req, res) => {
+app.post("/render", async (req, res) => {
   try {
-    const { topic } = req.body;
+    const { scenes } = req.body;
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: "You are a YouTube documentary script writer." },
-        { role: "user", content: `Write a compelling documentary script about: ${topic}` }
-      ],
+    if (!scenes || !Array.isArray(scenes)) {
+      return res.status(400).json({ error: "Scenes array required" });
+    }
+
+    const outputDir = "./output";
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir);
+    }
+
+    // Save images
+    scenes.forEach((scene, index) => {
+      const imageBase64 = scene.image;
+      const audioBase64 = scene.audio;
+
+      if (imageBase64) {
+        fs.writeFileSync(
+          `${outputDir}/image${index}.png`,
+          Buffer.from(imageBase64, "base64")
+        );
+      }
+
+      if (audioBase64) {
+        fs.writeFileSync(
+          `${outputDir}/audio${index}.mp3`,
+          Buffer.from(audioBase64, "base64")
+        );
+      }
     });
 
-    res.json({
-      script: response.choices[0].message.content,
-    });
+    // Example FFmpeg command placeholder
+    exec(
+      `ffmpeg -y -framerate 1 -i ${outputDir}/image%d.png -c:v libx264 -pix_fmt yuv420p ${outputDir}/final.mp4`,
+      (error) => {
+        if (error) {
+          return res.status(500).json({ error: "FFmpeg failed" });
+        }
 
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Something went wrong." });
+        res.json({ message: "Video created", path: "/output/final.mp4" });
+      }
+    );
+  } catch (err) {
+    res.status(500).json({ error: "Server error", details: err.message });
   }
 });
 
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
